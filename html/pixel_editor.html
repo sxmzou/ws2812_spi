@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>20x48 LED 表情编辑器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #00ff88;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #16213e;
+            border-radius: 10px;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 14px;
+        }
+
+        input[type="color"] {
+            width: 60px;
+            height: 40px;
+            border: none;
+            cursor: pointer;
+            background: none;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #00ff88;
+            color: #1a1a2e;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 10px #00ff88;
+        }
+
+        button.secondary {
+            background: #ff6b6b;
+        }
+
+        button.secondary:hover {
+            box-shadow: 0 0 10px #ff6b6b;
+        }
+
+        .editor-container {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .canvas-wrapper {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .canvas-header {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        #pixelCanvas {
+            border: 2px solid #333;
+            cursor: crosshair;
+            display: block;
+        }
+
+        #previewCanvas {
+            border: 2px solid #00ff88;
+        }
+
+        .output-section {
+            width: 100%;
+            max-width: 1400px;
+            margin-top: 20px;
+        }
+
+        .output-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 300px;
+            background: #16213e;
+            color: #00ff88;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .info {
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .size-display {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 20x48 LED 表情编辑器</h1>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>画笔颜色:</label>
+                <input type="color" id="colorPicker" value="#00ff88">
+            </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="eraseMode"> 橡皮擦模式
+                </label>
+            </div>
+            <button onclick="clearCanvas()">清空画布</button>
+            <button onclick="fillCanvas()">填充全部</button>
+            <button class="secondary" onclick="generateCode()">生成 C 数组</button>
+        </div>
+
+        <div class="editor-container">
+            <div class="canvas-wrapper">
+                <div class="canvas-header">编辑视图 (20行 x 48列) - 点击或拖动绘制</div>
+                <canvas id="pixelCanvas" width="720" height="300"></canvas>
+                <div class="size-display">物理布局: 横屏20行 x 48列 (蛇形排列)</div>
+            </div>
+            <div class="canvas-wrapper">
+                <div class="canvas-header">预览 - 实际 LED 排列效果</div>
+                <canvas id="previewCanvas" width="480" height="200"></canvas>
+            </div>
+        </div>
+
+        <div class="info">
+            💡 左键点击/拖动绘制 | 右键擦除 | 滚轮切换最近使用的颜色
+        </div>
+
+        <div class="output-section">
+            <div class="output-header">
+                <h3>生成的 C 代码:</h3>
+                <button onclick="copyCode()">复制代码</button>
+            </div>
+            <textarea id="outputCode" readonly placeholder="点击 '生成 C 数组' 按钮生成代码..."></textarea>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        const ROWS = 20;
+        const COLS = 48;
+        const CELL_SIZE = 15;
+        const TOTAL_LEDS = ROWS * COLS;
+
+        // 状态
+        let pixelData = new Array(TOTAL_LEDS).fill(null);
+        let isDrawing = false;
+        let lastColor = '#00ff88';
+        let colorHistory = ['#00ff88', '#ff0000', '#ffff00', '#0000ff', '#ff00ff', '#00ffff', '#ffffff'];
+
+        // Canvas
+        const canvas = document.getElementById('pixelCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function init() {
+            drawGrid();
+            drawPreview();
+            setupEvents();
+        }
+
+        // 绘制编辑网格
+        function drawGrid() {
+            ctx.fillStyle = '#0a0a15';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const x = col * CELL_SIZE;
+                    const y = row * CELL_SIZE;
+
+                    // 绘制格子
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+
+                    // 绘制像素
+                    const idx = row * COLS + col;
+                    if (pixelData[idx]) {
+                        ctx.fillStyle = pixelData[idx];
+                        ctx.fillRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+                    }
+                }
+            }
+        }
+
+        // 绘制预览（蛇形排列）
+        function drawPreview() {
+            const preview = document.getElementById('previewCanvas');
+            const pctx = preview.getContext('2d');
+            const pCellSize = 10;
+
+            pctx.fillStyle = '#0a0a15';
+            pctx.fillRect(0, 0, preview.width, preview.height);
+
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    // 蛇形排列计算实际 LED 索引
+                    let actualCol;
+                    if (row % 2 === 0) {
+                        // 偶数行：从左到右
+                        actualCol = col;
+                    } else {
+                        // 奇数行：从右到左
+                        actualCol = COLS - 1 - col;
+                    }
+                    const idx = row * COLS + actualCol;
+
+                    const x = col * pCellSize;
+                    const y = row * pCellSize;
+
+                    // 绘制像素
+                    if (pixelData[idx]) {
+                        pctx.fillStyle = pixelData[idx];
+                        pctx.fillRect(x + 1, y + 1, pCellSize - 2, pCellSize - 2);
+                    } else {
+                        pctx.fillStyle = '#1a1a2e';
+                        pctx.fillRect(x + 1, y + 1, pCellSize - 2, pCellSize - 2);
+                    }
+                }
+            }
+        }
+
+        // 设置事件
+        function setupEvents() {
+            canvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                paint(e);
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDrawing) paint(e);
+            });
+
+            canvas.addEventListener('mouseup', () => isDrawing = false);
+            canvas.addEventListener('mouseleave', () => isDrawing = false);
+
+            canvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                const pos = getPixelPos(e);
+                if (pos) {
+                    pixelData[pos.idx] = null;
+                    drawGrid();
+                    drawPreview();
+                }
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const current = document.getElementById('colorPicker').value;
+                const idx = colorHistory.indexOf(current);
+                const nextIdx = (idx + (e.deltaY > 0 ? 1 : -1) + colorHistory.length) % colorHistory.length;
+                document.getElementById('colorPicker').value = colorHistory[nextIdx];
+                lastColor = colorHistory[nextIdx];
+            });
+        }
+
+        function getPixelPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const col = Math.floor(x / CELL_SIZE);
+            const row = Math.floor(y / CELL_SIZE);
+
+            if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+                return { row, col, idx: row * COLS + col };
+            }
+            return null;
+        }
+
+        function paint(e) {
+            const pos = getPixelPos(e);
+            if (!pos) return;
+
+            const eraseMode = document.getElementById('eraseMode').checked;
+            const color = eraseMode ? null : document.getElementById('colorPicker').value;
+
+            if (!eraseMode && color !== lastColor) {
+                if (!colorHistory.includes(color)) {
+                    colorHistory.push(color);
+                }
+                lastColor = color;
+            }
+
+            pixelData[pos.idx] = color;
+            drawGrid();
+            drawPreview();
+        }
+
+        function clearCanvas() {
+            pixelData.fill(null);
+            drawGrid();
+            drawPreview();
+        }
+
+        function fillCanvas() {
+            const color = document.getElementById('colorPicker').value;
+            pixelData.fill(color);
+            drawGrid();
+            drawPreview();
+        }
+
+        function hexToRgb(hex) {
+            if (!hex) return { r: 0, g: 0, b: 0 };
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 0, g: 0, b: 0 };
+        }
+
+        function generateCode() {
+            let code = `/*
+ * LED 表情数据
+ * 生成时间: ${new Date().toLocaleString()}
+ * 尺寸: ${ROWS} x ${COLS} = ${TOTAL_LEDS} LEDs
+ * 排列: 蛇形 (偶数行从左到右, 奇数行从右到左)
+ */
+
+#include <stdint.h>
+
+#ifndef LED_EXPRESSION_H
+#define LED_EXPRESSION_H
+
+// RGB888 格式 (每个 LED 3 字节)
+static const uint8_t expression_data_rgb888[${TOTAL_LEDS} * 3] = {
+`;
+
+            // 蛇形排列生成数据
+            let lineColors = [];
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    let actualCol;
+                    if (row % 2 === 0) {
+                        actualCol = col;  // 偶数行从左到右
+                    } else {
+                        actualCol = COLS - 1 - col;  // 奇数行从右到左
+                    }
+                    const idx = row * COLS + actualCol;
+                    const rgb = hexToRgb(pixelData[idx]);
+                    lineColors.push(rgb);
+                }
+            }
+
+            // 生成 RGB888 数组
+            for (let i = 0; i < lineColors.length; i++) {
+                const c = lineColors[i];
+                code += `0x${c.r.toString(16).padStart(2, '0').toUpperCase()}, `;
+                code += `0x${c.g.toString(16).padStart(2, '0').toUpperCase()}, `;
+                code += `0x${c.b.toString(16).padStart(2, '0').toUpperCase()}`;
+                if (i < lineColors.length - 1) code += ',';
+                if ((i + 1) % 6 === 0) code += '\n    ';
+            }
+
+            code += `
+};
+
+#endif // LED_EXPRESSION_H
+`;
+
+            document.getElementById('outputCode').value = code;
+        }
+
+        function copyCode() {
+            const textarea = document.getElementById('outputCode');
+            textarea.select();
+            document.execCommand('copy');
+            alert('代码已复制到剪贴板!');
+        }
+
+        init();
+    </script>
+</body>
+</html>
